@@ -120,7 +120,7 @@ footer{font-size:11px;color:var(--muted);text-align:center}
     <div class="video-wrap" id="videoWrap" hidden>
       <video id="video" playsinline muted autoplay></video>
       <div class="aim" id="aim"></div>
-      <div class="hint">バーコードを枠に合わせると自動で読み取ります</div>
+      <div class="hint">バーコードを枠に合わせると自動で読み取り、カメラが止まります</div>
     </div>
     <p class="status" id="status" role="status"></p>
   </section>
@@ -163,7 +163,7 @@ footer{font-size:11px;color:var(--muted);text-align:center}
     </div>
   </section>
 
-  <footer>JAN照合スキャナー v4 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
+  <footer>JAN照合スキャナー v5 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
 </main>
 
 <script src="config.js"></script>
@@ -377,6 +377,9 @@ function onCode(text){
   if(c===last&&now-lastT<2500)return;last=c;lastT=now;
   const aim=$("aim");aim.classList.add("hit");setTimeout(()=>aim.classList.remove("hit"),400);
   handle(c,"カメラ");
+  // 1件読み取ったらカメラを止めて結果を見せる
+  stopScan();
+  setTimeout(()=>$("result").scrollIntoView({behavior:"smooth",block:"start"}),50);
 }
 const ZX_FORMATS=()=>{const Z=ZXing;return[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,Z.BarcodeFormat.ITF,Z.BarcodeFormat.CODE_128]};
 async function startScan(){
