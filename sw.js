@@ -1,8 +1,9 @@
 // オフライン用キャッシュ。アプリを更新したら VERSION を上げる。
-const VERSION = "jan-scanner-v2";
+const VERSION = "jan-scanner-v3";
 const FILES = [
   "./",
   "./index.html",
+  "./config.js",
   "./zxing.min.js",
   "./manifest.webmanifest",
   "./icon-192.png",
@@ -26,6 +27,8 @@ self.addEventListener("activate", e => {
 // （電波の弱い売場でも待たされない）
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
+  // 他サイト（マスタ配信のApps Scriptなど）への通信はキャッシュしない
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(cached => {
       const net = fetch(e.request)

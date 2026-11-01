@@ -77,6 +77,12 @@ button:focus-visible,.btn:focus-within,input:focus-visible{outline:3px solid var
 .jan span{margin-right:.45em}
 .cls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--muted);font-weight:600}
 .cls .code{background:var(--accent-soft);color:var(--accent);padding:1px 8px;border-radius:6px}
+dl.fields dd .cls{color:var(--fg);font-size:15px}
+.rank{display:inline-flex;align-items:center;justify-content:center;min-width:2em;padding:1px 8px;border-radius:6px;font-weight:800;
+  background:var(--line);color:var(--fg)}
+.rank.rA,.rank.rB,.rank.rC,.rank.rD{background:var(--accent);color:var(--accent-fg)}
+.pass{display:flex;gap:8px}
+.pass input{flex:1;min-width:0;font:inherit;font-family:var(--font-mono);font-size:18px;letter-spacing:.3em;padding:10px 12px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface);color:var(--fg)}
 .pname{font-size:20px;font-weight:700;margin:0;line-height:1.4}
 .meta{font-size:12px;color:var(--muted)}
 .meta.err{color:var(--err)}
@@ -141,7 +147,13 @@ footer{font-size:11px;color:var(--muted);text-align:center}
     <span class="label">商品マスタ</span>
     <div class="master">
       <p id="masterInfo"></p>
-      <p>CSVの1行目は見出しにしてください。<code>JAN</code>の列が必須で、<code>商品名</code>・<code>入数</code>・<code>Class_M</code>・<code>Class_Name</code>のほか、追加した列もそのまま表示されます。読み込んだマスタは端末に保存され、電波がなくても使えます。</p>
+      <p id="syncInfo" hidden></p>
+      <form class="pass" id="passForm" autocomplete="off" hidden>
+        <input id="passInput" type="password" inputmode="numeric" placeholder="パスワード" aria-label="マスタ取得用パスワード">
+        <button type="submit" class="primary" style="padding:10px 16px;font-size:15px">マスタを取得</button>
+      </form>
+      <button type="button" id="syncBtn" hidden>マスタを今すぐ更新</button>
+      <p>アプリを開くと、電波があるときは最新の商品マスタを自動で取り込みます。取り込んだマスタは端末に保存され、電波がなくても使えます。</p>
       <div class="row2">
         <label class="btn" for="csv">CSVを読み込む</label>
         <input id="csv" class="hidden-input" type="file" accept=".csv,text/csv,text/plain,text/comma-separated-values">
@@ -151,9 +163,10 @@ footer{font-size:11px;color:var(--muted);text-align:center}
     </div>
   </section>
 
-  <footer>JAN照合スキャナー v2 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
+  <footer>JAN照合スキャナー v3 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
 </main>
 
+<script src="config.js"></script>
 <script src="zxing.min.js"></script>
 <script>
 (function(){
@@ -174,7 +187,7 @@ const IDB={
 
 /* ---------- master ---------- */
 let master={headers:[],rows:[],name:"",ci:-1}, index=new Map(), keys=[], history=load("jan.hist")||[];
-const JAN_KEYS=["jan","jan_code","jancode","janコード","バーコード","barcode","ean","商品コード"];
+const JAN_KEYS=["jan","jan_code","jancode","janコード","バーコード","barcode","ean"];
 function findCol(h,list){const n=h.map(x=>String(x).trim().toLowerCase().replace(/\s/g,""));for(const k of list){const i=n.indexOf(k);if(i>=0)return i}return -1}
 function norm(s){return String(s||"").replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).replace(/\D/g,"")}
 const colIdx={};
@@ -185,14 +198,24 @@ function setMaster(m){
   for(const r of m.rows){const j=norm(r[ci]);if(j)index.set(j,r)}
   keys=[...index.keys()];
   master={...m,ci};
-  const h=m.headers;
-  colIdx.name=h.findIndex(x=>/商品名|品名|^name$|hin_name/i.test(String(x).trim()));
-  colIdx.cname=h.findIndex(x=>/class_?name|分類名|部門名|カテゴリ名/i.test(String(x).trim()));
-  colIdx.ccode=h.findIndex(x=>/^class_?m$|分類コード|部門コード/i.test(String(x).trim()));
-  colIdx.pack=h.findIndex(x=>/入数|入り数|irisu/i.test(String(x).trim()));
+  const h=m.headers.map(x=>String(x).trim());
+  const at=re=>h.findIndex(x=>re.test(x));
+  colIdx.name=at(/^(商品名|品名|name|hin_name)$/i);
+  colIdx.hin=at(/^(商品コード|hin_code)$/i);
+  colIdx.pack=at(/入数|入り数|irisu/i);
+  colIdx.lcode=at(/^(大分類コード|class_l)$/i); colIdx.lname=at(/^大分類(名)?$/);
+  colIdx.mcode=at(/^(中分類コード)$/);           colIdx.mname=at(/^中分類(名)?$/);
+  colIdx.scode=at(/^(小分類コード|class_s)$/i); colIdx.sname=at(/^小分類(名)?$/);
+  colIdx.rankNo=at(/^(ランク番号|hseq)$/i);     colIdx.rank=at(/^(ランク|hrank)$/i);
+  // 旧形式（Class_M / Class_Name）
+  colIdx.cname=at(/class_?name|分類名|部門名|カテゴリ名/i);
+  colIdx.ccode=at(/^class_?m$/i);
+  if(colIdx.mname<0&&colIdx.cname>=0){colIdx.mname=colIdx.cname;colIdx.mcode=colIdx.ccode}
+  if(colIdx.mcode<0&&colIdx.ccode>=0)colIdx.mcode=colIdx.ccode;
   renderMaster();
 }
-function cell(row,i){return i>=0&&row?String(row[i]??"").trim():""}
+function cell(row,i){if(!(i>=0&&row))return"";let v=String(row[i]??"").trim();if(/^-?\d+\.0+$/.test(v))v=v.replace(/\.0+$/,"");return v}
+function catText(row,ci,ni){return[cell(row,ci),cell(row,ni)].filter(Boolean).join("  ")}
 function lookup(code){
   const c=norm(code);const tries=[c];
   if(c.length===12)tries.push("0"+c); if(c.length===13&&c[0]==="0")tries.push(c.slice(1));
@@ -201,8 +224,9 @@ function lookup(code){
 function renderMaster(){
   const info=$("masterInfo");info.textContent="";
   if(!index.size){info.textContent="商品マスタが未登録です。下の「CSVを読み込む」から読み込んでください。";return}
+  const fmt=t=>new Date(t).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
   const b=document.createElement("strong");b.textContent=master.name;info.append(b);
-  info.append(` ・ ${index.size.toLocaleString()}品目`+(master.loaded?" ・ 読込 "+new Date(master.loaded).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}):""));
+  info.append(` ・ ${index.size.toLocaleString()}品目`+(master.updated?" ・ マスタ更新 "+fmt(master.updated):"")+(master.loaded?" ・ 取込 "+fmt(master.loaded):""));
 }
 
 /* ---------- CSV ---------- */
@@ -248,16 +272,29 @@ function render(code,hit,src){
   if(!row){const p=document.createElement("p");p.className="empty";
     p.textContent=index.size?"この商品はマスタに登録されていません。登録漏れやJANの変更がないか確認してください。":"商品マスタが未登録です。下の「CSVを読み込む」から読み込んでください。";
     card.append(p);return}
-  if(colIdx.cname>=0||colIdx.ccode>=0){const c=document.createElement("div");c.className="cls";
-    const cc=cell(row,colIdx.ccode);if(cc){const s=document.createElement("span");s.className="code mono";s.textContent=cc;c.append(s)}
-    const s=document.createElement("span");s.textContent=cell(row,colIdx.cname)||"分類なし";c.append(s);card.append(c)}
   const n=document.createElement("p");n.className="pname";n.textContent=cell(row,colIdx.name)||"（名称なし）";card.append(n);
   const dl=document.createElement("dl");dl.className="fields";
-  master.headers.forEach((k,i)=>{if(i===master.ci||i===colIdx.name||i===colIdx.cname||i===colIdx.ccode||!k)return;
-    const dt=document.createElement("dt");dt.textContent=k;const dd=document.createElement("dd");let v=cell(row,i);
-    if(i===colIdx.pack&&/^\d+$/.test(v)){v=Number(v).toLocaleString()+" 個入";dd.className="num"}
-    dd.textContent=v||"—";dl.append(dt,dd)});
-  if(dl.children.length)card.append(dl);
+  const add=(label,value,cls)=>{const dt=document.createElement("dt");dt.textContent=label;const dd=document.createElement("dd");
+    if(value instanceof Node)dd.append(value);else dd.textContent=value||"—";if(cls)dd.className=cls;dl.append(dt,dd)};
+  const used=new Set([master.ci,colIdx.name]);
+  // 表示順：商品コード → JAN → 入数 → 大・中・小分類 → ランク
+  if(colIdx.hin>=0){add("商品コード",cell(row,colIdx.hin),"num");used.add(colIdx.hin)}
+  add("JAN",jan,"num");
+  if(colIdx.pack>=0){const v=cell(row,colIdx.pack);add("入数",/^\d+$/.test(v)?Number(v).toLocaleString()+" 個入":v,"num");used.add(colIdx.pack)}
+  [["大分類",colIdx.lcode,colIdx.lname],["中分類",colIdx.mcode,colIdx.mname],["小分類",colIdx.scode,colIdx.sname]].forEach(([lb,ci,ni])=>{
+    if(ci<0&&ni<0)return;used.add(ci);used.add(ni);
+    const wrap=document.createElement("span");wrap.className="cls";
+    const cc=cell(row,ci);if(cc){const s=document.createElement("span");s.className="code mono";s.textContent=cc;wrap.append(s)}
+    const s=document.createElement("span");s.textContent=cell(row,ni)||"—";wrap.append(s);add(lb,wrap)});
+  if(colIdx.rank>=0||colIdx.rankNo>=0){used.add(colIdx.rank);used.add(colIdx.rankNo);
+    const r=cell(row,colIdx.rank),no=cell(row,colIdx.rankNo);
+    if(r||no){const wrap=document.createElement("span");wrap.className="cls";
+      if(r){const s=document.createElement("span");s.className="rank r"+r.toUpperCase();s.textContent=r;wrap.append(s)}
+      if(no){const s=document.createElement("span");s.className="mono";s.textContent="番号 "+Number(no).toLocaleString();wrap.append(s)}
+      add("ランク",wrap)}
+    else add("ランク","ランクなし")}
+  master.headers.forEach((k,i)=>{if(used.has(i)||!k)return;add(k,cell(row,i))});
+  card.append(dl);
 }
 function renderEmpty(){const c=$("result");c.className="card";c.textContent="";const p=document.createElement("p");p.className="empty";
   p.textContent=index.size?"「スキャン開始」を押してバーコードにカメラを向けるか、JANまたは下5桁を入力してください。":"まず下の「CSVを読み込む」から商品マスタを読み込んでください。";c.append(p)}
@@ -313,7 +350,8 @@ function suggest(q){
     const sj=document.createElement("span");sj.className="sj";
     if(k.endsWith(q)){sj.append(k.slice(0,k.length-q.length));const m=document.createElement("mark");m.textContent=q;sj.append(m)}else sj.textContent=k;
     const sc=document.createElement("span");sc.className="sc";const pk=cell(row,colIdx.pack);
-    sc.textContent=[cell(row,colIdx.cname),pk?pk+"個入":""].filter(Boolean).join(" ・ ");
+    const rk=cell(row,colIdx.rank);
+    sc.textContent=[cell(row,colIdx.sname)||cell(row,colIdx.mname),pk?pk+"個入":"",rk?"ランク"+rk:""].filter(Boolean).join(" ・ ");
     const sn=document.createElement("span");sn.className="sn";sn.textContent=cell(row,colIdx.name)||"（名称なし）";
     b.append(sj,sc,sn);b.onclick=()=>{handle(k,"下"+q.length+"桁から選択");$("manualJan").value="";box.hidden=true;
       $("result").scrollIntoView({behavior:"smooth",block:"nearest"})};
@@ -400,9 +438,59 @@ $("photo").addEventListener("change",async e=>{
 function net(){$("net").textContent=navigator.onLine?"オンライン":"オフライン（端末内のマスタで照合中）"}
 addEventListener("online",net);addEventListener("offline",net);net();
 
+/* ---------- auto sync from server ---------- */
+const MASTER_URL=((window.JAN_CONFIG||{}).MASTER_URL||"").trim();
+let syncing=false;
+function getPass(){try{return localStorage.getItem("jan.pass")||""}catch(e){return""}}
+function setPass(v){try{v?localStorage.setItem("jan.pass",v):localStorage.removeItem("jan.pass")}catch(e){}}
+function showPassForm(msg){$("passForm").hidden=false;$("syncBtn").hidden=true;if(msg)syncNote(msg,true)}
+function syncNote(msg,err){const s=$("syncInfo");s.hidden=!msg;s.textContent=msg||"";s.style.color=err?"var(--err)":""}
+async function gunzip(u8){
+  if(!("DecompressionStream" in window))throw new Error("nogzip");
+  const ds=new Blob([u8]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(ds).arrayBuffer());
+}
+async function syncMaster(force){
+  if(!MASTER_URL||syncing)return;
+  const pass=getPass();
+  if(!pass){showPassForm(index.size?"":"スタッフ用パスワードを入力すると、商品マスタを取り込みます。");return}
+  if(!navigator.onLine){syncNote("オフラインのため、端末に保存済みのマスタで照合しています。");return}
+  syncing=true;$("syncBtn").disabled=true;syncNote("最新のマスタを確認しています…");
+  try{
+    const gz="DecompressionStream" in window;
+    const v=force?0:(master.updated||0);
+    const url=MASTER_URL+(MASTER_URL.includes("?")?"&":"?")+"p="+encodeURIComponent(pass)+"&v="+v+(gz?"&gz=1":"")+"&t="+Date.now();
+    const res=await fetch(url,{cache:"no-store"});
+    const j=await res.json();
+    if(!j.ok){
+      if(j.error==="bad_passcode"){setPass("");showPassForm("パスワードが違います。もう一度入力してください。");return}
+      if(j.error==="locked"){syncNote("パスワードの入力ミスが続いたため、10分間取得できません。しばらくしてからお試しください。",true);return}
+      if(j.error==="not_found"){syncNote("サーバーに商品マスタが見つかりません。管理者に連絡してください。",true);return}
+      syncNote("マスタを取得できませんでした（"+(j.error||"エラー")+"）。",true);return}
+    $("passForm").hidden=true;$("syncBtn").hidden=false;
+    if(j.unchanged){syncNote("商品マスタは最新です。");return}
+    let bytes=Uint8Array.from(atob(j.data),c=>c.charCodeAt(0));
+    if(j.gz)bytes=await gunzip(bytes);
+    const rows=parseCSV(decode(bytes.buffer));
+    if(rows.length<2)throw new Error("データ行がありません。");
+    const m={name:j.name||"item_master.csv",loaded:Date.now(),updated:j.updated,headers:rows[0].map(s=>s.trim()),rows:rows.slice(1)};
+    setMaster(m);
+    try{await IDB.set("master",m)}catch(e){}
+    syncNote(`最新のマスタを取り込みました（${index.size.toLocaleString()}品目）`);
+    renderEmpty();
+  }catch(err){
+    syncNote(index.size?"マスタを確認できませんでした。保存済みのマスタで照合しています。":"マスタを取得できませんでした。電波の良い場所でもう一度お試しください。",!index.size);
+    $("syncBtn").hidden=false;
+  }finally{syncing=false;$("syncBtn").disabled=false}
+}
+$("passForm").addEventListener("submit",e=>{e.preventDefault();const v=$("passInput").value.trim();if(!v)return;
+  setPass(v);$("passInput").value="";$("passInput").blur();$("passForm").hidden=true;syncMaster(true)});
+$("syncBtn").addEventListener("click",()=>syncMaster(true));
+addEventListener("online",()=>syncMaster(false));
+
 /* ---------- init ---------- */
 renderMaster();renderHistory();renderEmpty();
-IDB.get("master").then(m=>{if(m&&m.headers){setMaster(m);renderEmpty()}}).catch(()=>{});
+IDB.get("master").then(m=>{if(m&&m.headers){setMaster(m);renderEmpty()}}).catch(()=>{}).then(()=>syncMaster(false));
 if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost")){navigator.serviceWorker.register("sw.js").catch(()=>{})}
 })();
 </script>

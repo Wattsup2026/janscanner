@@ -1,0 +1,82 @@
+/**
+ * JAN照合スキャナー：商品マスタ配信用 Google Apps Script
+ *
+ * Googleドライブにある商品マスタ（item_master.csv）を、
+ * 正しいパスワードを付けて呼ばれたときだけアプリに返します。
+ *
+ * 設定（スクリプト プロパティ）
+ *   PASSCODE  … スタッフ共通のパスワード（例：2735）
+ *   FILE_NAME … ドライブ上のマスタのファイル名（省略時 item_master.csv）
+ *
+ * パスワードの総当たり対策として、10分間に10回間違えると
+ * 10分間すべての取得を止めます。
+ */
+
+var MAX_FAILS = 10;
+var LOCK_SECONDS = 600;
+
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  var props = PropertiesService.getScriptProperties();
+  var pass = String(props.getProperty('PASSCODE') || '');
+  var fileName = props.getProperty('FILE_NAME') || 'item_master.csv';
+  var cache = CacheService.getScriptCache();
+
+  var fails = Number(cache.get('fails') || 0);
+  if (fails >= MAX_FAILS) {
+    return json({ ok: false, error: 'locked' });
+  }
+  if (!pass) {
+    return json({ ok: false, error: 'not_configured' });
+  }
+  if (String(p.p || '') !== pass) {
+    cache.put('fails', String(fails + 1), LOCK_SECONDS);
+    return json({ ok: false, error: 'bad_passcode' });
+  }
+
+  var file = latestFile(fileName);
+  if (!file) {
+    return json({ ok: false, error: 'not_found', name: fileName });
+  }
+
+  var updated = file.getLastUpdated().getTime();
+  if (p.v && Number(p.v) === updated) {
+    return json({ ok: true, unchanged: true, updated: updated });
+  }
+
+  var blob = file.getBlob();
+  var bytes = p.gz === '1' ? Utilities.gzip(blob).getBytes() : blob.getBytes();
+  return json({
+    ok: true,
+    name: file.getName(),
+    updated: updated,
+    size: blob.getBytes().length,
+    gz: p.gz === '1',
+    data: Utilities.base64Encode(bytes)
+  });
+}
+
+/** 同じ名前のファイルが複数あるときは、いちばん新しいものを使う */
+function latestFile(name) {
+  var it = DriveApp.getFilesByName(name);
+  var best = null;
+  while (it.hasNext()) {
+    var f = it.next();
+    if (f.isTrashed()) continue;
+    if (!best || f.getLastUpdated() > best.getLastUpdated()) best = f;
+  }
+  return best;
+}
+
+function json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/** 動作確認用：エディタでこの関数を実行すると、マスタが見つかるか確認できます */
+function testFindMaster() {
+  var name = PropertiesService.getScriptProperties().getProperty('FILE_NAME') || 'item_master.csv';
+  var f = latestFile(name);
+  Logger.log(f ? ('見つかりました: ' + f.getName() + ' / 更新 ' + f.getLastUpdated() + ' / ' + f.getSize() + ' bytes')
+               : ('見つかりません: ' + name));
+}
