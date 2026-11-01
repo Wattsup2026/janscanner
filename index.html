@@ -163,7 +163,7 @@ footer{font-size:11px;color:var(--muted);text-align:center}
     </div>
   </section>
 
-  <footer>JAN照合スキャナー v3 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
+  <footer>JAN照合スキャナー v4 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
 </main>
 
 <script src="config.js"></script>
@@ -479,11 +479,12 @@ async function syncMaster(force){
     syncNote(`最新のマスタを取り込みました（${index.size.toLocaleString()}品目）`);
     renderEmpty();
   }catch(err){
+    console.error("sync failed",err);
     syncNote(index.size?"マスタを確認できませんでした。保存済みのマスタで照合しています。":"マスタを取得できませんでした。電波の良い場所でもう一度お試しください。",!index.size);
     $("syncBtn").hidden=false;
   }finally{syncing=false;$("syncBtn").disabled=false}
 }
-$("passForm").addEventListener("submit",e=>{e.preventDefault();const v=$("passInput").value.trim();if(!v)return;
+$("passForm").addEventListener("submit",e=>{e.preventDefault();const v=$("passInput").value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).trim();if(!v)return;
   setPass(v);$("passInput").value="";$("passInput").blur();$("passForm").hidden=true;syncMaster(true)});
 $("syncBtn").addEventListener("click",()=>syncMaster(true));
 addEventListener("online",()=>syncMaster(false));

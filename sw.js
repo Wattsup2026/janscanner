@@ -1,5 +1,5 @@
 // オフライン用キャッシュ。アプリを更新したら VERSION を上げる。
-const VERSION = "jan-scanner-v3";
+const VERSION = "jan-scanner-v4";
 const FILES = [
   "./",
   "./index.html",
@@ -29,6 +29,20 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   // 他サイト（マスタ配信のApps Scriptなど）への通信はキャッシュしない
   if (new URL(e.request.url).origin !== self.location.origin) return;
+  // 画面本体と設定は、通信できれば常に最新版を使う（3秒で応答がなければ端末内の版）
+  const u = new URL(e.request.url);
+  if (e.request.mode === "navigate" || u.pathname.endsWith("/config.js") || u.pathname.endsWith("/index.html")) {
+    e.respondWith(
+      Promise.race([
+        fetch(e.request).then(res => {
+          if (res && res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); }
+          return res;
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000))
+      ]).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match("./index.html")))
+    );
+    return;
+  }
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(cached => {
       const net = fetch(e.request)
