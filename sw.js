@@ -1,5 +1,5 @@
 // オフライン用キャッシュ。アプリを更新したら VERSION を上げる。
-const VERSION = "jan-scanner-v5";
+const VERSION = "jan-scanner-v6";
 const FILES = [
   "./",
   "./index.html",
