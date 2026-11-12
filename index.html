@@ -27,6 +27,14 @@
   --accent:#4fc39a; --accent-fg:#06231a; --accent-soft:#183a2e;
   --warn:#f0b35a; --warn-soft:#3a2c14; --err:#f08a82; --err-soft:#3d1f1d; --hl:#5a4a00; color-scheme:dark}}
 *{box-sizing:border-box}
+.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding-block:24px}
+.gate-box{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px 22px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.gate-box img{border-radius:14px}
+.gate-box h1{font-size:20px}
+.gate-box p{margin:0;color:var(--muted);font-size:14px}
+.gate-box input{width:100%;font:inherit;font-family:var(--font-mono);font-size:22px;letter-spacing:.3em;text-align:center;padding:12px;border-radius:var(--r);border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.gate-box .primary{width:100%}
+.gate-msg{min-height:1.4em;color:var(--err)!important;font-weight:600}
 [hidden]{display:none!important}
 html,body{background:var(--bg);color:var(--fg);margin:0}
 body{font-family:var(--font-body);font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%;
@@ -111,12 +119,22 @@ code{font-family:var(--font-mono);font-size:12px;background:var(--bg);padding:1p
 footer{font-size:11px;color:var(--muted);text-align:center}
 .hist-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 button.clear{padding:6px 12px;font-size:13px;font-weight:600;color:var(--err);border-color:var(--line)}
-button.clear.armed{background:var(--err);color:#fff;border-color:var(--err)}
+#logoutBtn.armed,button.clear.armed{background:var(--err);color:#fff;border-color:var(--err)}
 @media (prefers-reduced-motion:no-preference){.card.flash{animation:fl .35s ease}@keyframes fl{from{transform:scale(.98)}to{transform:none}}}
 </style>
 </head>
 <body>
-<main>
+<div class="gate" id="gate" hidden>
+  <form class="gate-box" id="gateForm" autocomplete="off">
+    <img src="icon-192.png" alt="" width="64" height="64">
+    <h1>JAN照合スキャナー</h1>
+    <p>スタッフ用パスワードを入力してください</p>
+    <input id="gateInput" type="password" inputmode="numeric" placeholder="パスワード" aria-label="パスワード" autocomplete="off">
+    <button type="submit" class="primary" id="gateBtn">ログイン</button>
+    <p class="gate-msg" id="gateMsg" role="alert"></p>
+  </form>
+</div>
+<main id="app" hidden>
   <header>
     <h1>JAN照合スキャナー</h1>
     <span class="net" id="net"></span>
@@ -163,11 +181,11 @@ button.clear.armed{background:var(--err);color:#fff;border-color:var(--err)}
     <div class="master">
       <p id="masterInfo"></p>
       <p id="syncInfo" hidden></p>
-      <form class="pass" id="passForm" autocomplete="off" hidden>
+      <form class="pass" id="passForm" autocomplete="off" hidden style="display:none">
         <input id="passInput" type="password" inputmode="numeric" placeholder="パスワード" aria-label="マスタ取得用パスワード">
         <button type="submit" class="primary" style="padding:10px 16px;font-size:15px">マスタを取得</button>
       </form>
-      <button type="button" id="syncBtn" hidden>マスタを今すぐ更新</button>
+      <div class="row2"><button type="button" id="syncBtn" hidden>マスタを今すぐ更新</button><button type="button" id="logoutBtn">ログアウト</button></div>
       <p>アプリを開くと、電波があるときは最新の商品マスタを自動で取り込みます。取り込んだマスタは端末に保存され、電波がなくても使えます。</p>
       <div class="row2">
         <label class="btn" for="csv">CSVを読み込む</label>
@@ -178,7 +196,7 @@ button.clear.armed{background:var(--err);color:#fff;border-color:var(--err)}
     </div>
   </section>
 
-  <footer>JAN照合スキャナー v7 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
+  <footer>JAN照合スキャナー v8 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
 </main>
 
 <script src="config.js"></script>
@@ -484,7 +502,17 @@ const MASTER_URL=((window.JAN_CONFIG||{}).MASTER_URL||"").trim();
 let syncing=false;
 function getPass(){try{return localStorage.getItem("jan.pass")||""}catch(e){return""}}
 function setPass(v){try{v?localStorage.setItem("jan.pass",v):localStorage.removeItem("jan.pass")}catch(e){}}
-function showPassForm(msg){$("passForm").hidden=false;$("syncBtn").hidden=true;if(msg)syncNote(msg,true)}
+function showApp(){$("gate").hidden=true;$("app").hidden=false}
+function showGate(msg){$("app").hidden=true;$("gate").hidden=false;$("gateMsg").textContent=msg||"";
+  $("gateBtn").disabled=false;$("gateBtn").textContent="ログイン";setTimeout(()=>{try{$("gateInput").focus()}catch(e){}},50)}
+async function lockAndClear(msg){
+  // パスワードが無効になったら、端末内のマスタも消して中身を見えなくする
+  setPass("");try{stopScan()}catch(e){}
+  master={headers:[],rows:[],name:"",ci:-1};index=new Map();keys=[];
+  try{await IDB.set("master",null)}catch(e){}
+  renderMaster();renderEmpty();showGate(msg);
+}
+function showPassForm(msg){lockAndClear(msg)}
 function syncNote(msg,err){const s=$("syncInfo");s.hidden=!msg;s.textContent=msg||"";s.style.color=err?"var(--err)":""}
 async function gunzip(u8){
   if(!("DecompressionStream" in window))throw new Error("nogzip");
@@ -492,10 +520,10 @@ async function gunzip(u8){
   return new Uint8Array(await new Response(ds).arrayBuffer());
 }
 async function syncMaster(force){
-  if(!MASTER_URL||syncing)return;
+  if(!MASTER_URL||syncing)return "skip";
   const pass=getPass();
-  if(!pass){showPassForm(index.size?"":"スタッフ用パスワードを入力すると、商品マスタを取り込みます。");return}
-  if(!navigator.onLine){syncNote("オフラインのため、端末に保存済みのマスタで照合しています。");return}
+  if(!pass){showGate("");return "nopass"}
+  if(!navigator.onLine){syncNote("オフラインのため、端末に保存済みのマスタで照合しています。");return "offline"}
   syncing=true;$("syncBtn").disabled=true;syncNote("最新のマスタを確認しています…");
   try{
     const gz="DecompressionStream" in window;
@@ -504,12 +532,12 @@ async function syncMaster(force){
     const res=await fetch(url,{cache:"no-store"});
     const j=await res.json();
     if(!j.ok){
-      if(j.error==="bad_passcode"){setPass("");showPassForm("パスワードが違います。もう一度入力してください。");return}
-      if(j.error==="locked"){syncNote("パスワードの入力ミスが続いたため、10分間取得できません。しばらくしてからお試しください。",true);return}
-      if(j.error==="not_found"){syncNote("サーバーに商品マスタが見つかりません。管理者に連絡してください。",true);return}
-      syncNote("マスタを取得できませんでした（"+(j.error||"エラー")+"）。",true);return}
-    $("passForm").hidden=true;$("syncBtn").hidden=false;
-    if(j.unchanged){syncNote("商品マスタは最新です。");return}
+      if(j.error==="bad_passcode")return "bad";
+      if(j.error==="locked")return "locked";
+      if(j.error==="not_found"){syncNote("サーバーに商品マスタが見つかりません。管理者に連絡してください。",true);return "ok"}
+      syncNote("マスタを取得できませんでした（"+(j.error||"エラー")+"）。",true);return "error"}
+    $("syncBtn").hidden=false;
+    if(j.unchanged){syncNote("商品マスタは最新です。");return "ok"}
     let bytes=Uint8Array.from(atob(j.data),c=>c.charCodeAt(0));
     if(j.gz)bytes=await gunzip(bytes);
     const rows=parseCSV(decode(bytes.buffer));
@@ -518,21 +546,46 @@ async function syncMaster(force){
     setMaster(m);
     try{await IDB.set("master",m)}catch(e){}
     syncNote(`最新のマスタを取り込みました（${index.size.toLocaleString()}品目）`);
-    renderEmpty();
+    renderEmpty();return "ok";
   }catch(err){
     console.error("sync failed",err);
     syncNote(index.size?"マスタを確認できませんでした。保存済みのマスタで照合しています。":"マスタを取得できませんでした。電波の良い場所でもう一度お試しください。",!index.size);
-    $("syncBtn").hidden=false;
+    $("syncBtn").hidden=false;return "error";
   }finally{syncing=false;$("syncBtn").disabled=false}
 }
-$("passForm").addEventListener("submit",e=>{e.preventDefault();const v=$("passInput").value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).trim();if(!v)return;
-  setPass(v);$("passInput").value="";$("passInput").blur();$("passForm").hidden=true;syncMaster(true)});
-$("syncBtn").addEventListener("click",()=>syncMaster(true));
-addEventListener("online",()=>syncMaster(false));
+async function runSync(force){
+  const r=await syncMaster(force);
+  if(r==="bad")await lockAndClear("パスワードが変更されました。新しいパスワードを入力してください。");
+  else if(r==="locked")syncNote("パスワードの入力ミスが続いたため、10分間取得できません。しばらくしてからお試しください。",true);
+  return r;
+}
+$("gateForm").addEventListener("submit",async e=>{e.preventDefault();
+  const v=$("gateInput").value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).trim();
+  if(!v){$("gateMsg").textContent="パスワードを入力してください。";return}
+  if(!navigator.onLine){$("gateMsg").textContent="初回のログインにはインターネット接続が必要です。";return}
+  $("gateBtn").disabled=true;$("gateBtn").textContent="確認中…";$("gateMsg").textContent="";
+  setPass(v);const r=await syncMaster(true);
+  $("gateBtn").disabled=false;$("gateBtn").textContent="ログイン";
+  if(r==="ok"){$("gateInput").value="";$("gateInput").blur();showApp()}
+  else if(r==="bad"){setPass("");$("gateMsg").textContent="パスワードが違います。";$("gateInput").select()}
+  else if(r==="locked"){setPass("");$("gateMsg").textContent="入力ミスが続いたため、10分間ログインできません。"}
+  else{setPass("");$("gateMsg").textContent="サーバーに接続できませんでした。電波の良い場所でもう一度お試しください。"}
+});
+$("syncBtn").addEventListener("click",()=>runSync(true));
+let logoutArmed=null;
+$("logoutBtn").addEventListener("click",async()=>{const b=$("logoutBtn");
+  if(!b.classList.contains("armed")){b.classList.add("armed");b.textContent="もう一度押すとログアウト";logoutArmed=setTimeout(()=>{b.classList.remove("armed");b.textContent="ログアウト"},4000);return}
+  clearTimeout(logoutArmed);b.classList.remove("armed");b.textContent="ログアウト";
+  history=[];store("jan.hist",history);renderHistory();await lockAndClear("ログアウトしました。");});
+addEventListener("online",()=>{if(getPass())runSync(false)});
 
 /* ---------- init ---------- */
 renderMaster();renderHistory();renderEmpty();
-IDB.get("master").then(m=>{if(m&&m.headers){setMaster(m);renderEmpty()}}).catch(()=>{}).then(()=>syncMaster(false));
+if(MASTER_URL&&!getPass()){showGate("")}
+else{
+  showApp();
+  IDB.get("master").then(m=>{if(m&&m.headers){setMaster(m);renderEmpty()}}).catch(()=>{}).then(()=>{if(MASTER_URL)runSync(false)});
+}
 if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost")){navigator.serviceWorker.register("sw.js").catch(()=>{})}
 })();
 </script>
