@@ -34,6 +34,7 @@
 .gate-box p{margin:0;color:var(--muted);font-size:14px}
 .gate-box input{width:100%;font:inherit;font-family:var(--font-mono);font-size:22px;letter-spacing:.3em;text-align:center;padding:12px;border-radius:var(--r);border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 .gate-box .primary{width:100%}
+.toast{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:50;background:var(--fg);color:var(--bg);font-weight:700;font-size:17px;padding:16px 26px;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
 .gate-msg{min-height:1.4em;color:var(--err)!important;font-weight:600}
 [hidden]{display:none!important}
 html,body{background:var(--bg);color:var(--fg);margin:0}
@@ -41,7 +42,9 @@ body{font-family:var(--font-body);font-size:15px;line-height:1.6;-webkit-text-si
   padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 main{max-width:560px;margin:0 auto;padding-block:16px 48px;display:flex;flex-direction:column;gap:16px}
-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+header .ttl{display:flex;flex-direction:column;gap:0;min-width:0}
+button.endbtn{padding:8px 12px;font-size:13px;font-weight:700;color:var(--err);border:2px solid var(--err);background:var(--surface)}
 h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.02em}
 .net{font-size:12px;color:var(--muted)}
 .label{font-size:11px;letter-spacing:.12em;color:var(--muted);font-weight:600}
@@ -134,10 +137,11 @@ button.clear{padding:6px 12px;font-size:13px;font-weight:600;color:var(--err);bo
     <p class="gate-msg" id="gateMsg" role="alert"></p>
   </form>
 </div>
+<div class="toast" id="toast" hidden></div>
 <main id="app" hidden>
   <header>
-    <h1>JAN照合スキャナー</h1>
-    <span class="net" id="net"></span>
+    <div class="ttl"><h1>JAN照合スキャナー</h1><span class="net" id="net"></span></div>
+    <button type="button" class="endbtn" id="endBtn">終了（ログアウト）</button>
   </header>
 
   <section aria-label="読み取り">
@@ -196,7 +200,7 @@ button.clear{padding:6px 12px;font-size:13px;font-weight:600;color:var(--err);bo
     </div>
   </section>
 
-  <footer>JAN照合スキャナー v8 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
+  <footer>JAN照合スキャナー v11 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
 </main>
 
 <script src="config.js"></script>
@@ -363,6 +367,7 @@ $("clearHist").addEventListener("click",()=>{
 /* ---------- handle ---------- */
 function setStatus(msg,err){const s=$("status");s.textContent=msg||"";s.className="status"+(err?" err":"")}
 function handle(code,src){
+  lastActive=Date.now();
   const c=norm(code);if(!c)return;
   const hit=lookup(c);render(c,hit,src);addHistory(hit?hit.jan:c,hit&&hit.row);
   try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}
@@ -497,33 +502,54 @@ $("photo").addEventListener("change",async e=>{
 function net(){$("net").textContent=navigator.onLine?"オンライン":"オフライン（端末内のマスタで照合中）"}
 addEventListener("online",net);addEventListener("offline",net);net();
 
-/* ---------- auto sync from server ---------- */
+/* ---------- login / auto sync from server ---------- */
 const MASTER_URL=((window.JAN_CONFIG||{}).MASTER_URL||"").trim();
+// アプリを離れてからこの時間が過ぎたら自動ログアウト（ミリ秒）
+const AWAY_LOGOUT_MS=3*60*1000;
+// 画面を開いたまま操作がない時間がこれを超えたら自動ログアウト（ミリ秒）
+const IDLE_LOGOUT_MS=5*60*1000;
+let lastActive=Date.now();
 let syncing=false;
-function getPass(){try{return localStorage.getItem("jan.pass")||""}catch(e){return""}}
-function setPass(v){try{v?localStorage.setItem("jan.pass",v):localStorage.removeItem("jan.pass")}catch(e){}}
+// ログイン状態はこの起動の間だけ保持（アプリを閉じると消える）
+function getPass(){try{return sessionStorage.getItem("jan.pass")||""}catch(e){return""}}
+function setPass(v){try{v?sessionStorage.setItem("jan.pass",v):sessionStorage.removeItem("jan.pass")}catch(e){}}
+try{localStorage.removeItem("jan.pass")}catch(e){} // 旧版で保存したパスワードは消す
+async function hashPass(v){try{const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("jan-scanner:"+v));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("")}catch(e){return""}}
+function getHash(){try{return localStorage.getItem("jan.passhash")||""}catch(e){return""}}
+function setHash(h){try{h?localStorage.setItem("jan.passhash",h):localStorage.removeItem("jan.passhash")}catch(e){}}
+function toast(msg,ms){const t=$("toast");t.textContent=msg;t.hidden=false;return new Promise(r=>setTimeout(()=>{t.hidden=true;r()},ms||1200))}
 function showApp(){$("gate").hidden=true;$("app").hidden=false}
-function showGate(msg){$("app").hidden=true;$("gate").hidden=false;$("gateMsg").textContent=msg||"";
+function clearScreen(){
+  // 画面上の商品情報を消す（端末内の保存マスタは残すので、次回はすぐ使える）
+  try{stopScan()}catch(e){}
+  master={headers:[],rows:[],name:"",ci:-1};index=new Map();keys=[];
+  $("manualJan").value="";$("sugg").hidden=true;renderMaster();renderEmpty();setStatus("");syncNote("");
+}
+function showGate(msg){clearScreen();$("app").hidden=true;$("gate").hidden=false;$("gateMsg").textContent=msg||"";
   $("gateBtn").disabled=false;$("gateBtn").textContent="ログイン";setTimeout(()=>{try{$("gateInput").focus()}catch(e){}},50)}
+async function logout(msg,withToast){
+  if(withToast)await toast("ログアウトします");
+  setPass("");try{sessionStorage.removeItem("jan.hiddenAt")}catch(e){}
+  showGate(msg||"");
+}
 async function lockAndClear(msg){
   // パスワードが無効になったら、端末内のマスタも消して中身を見えなくする
-  setPass("");try{stopScan()}catch(e){}
-  master={headers:[],rows:[],name:"",ci:-1};index=new Map();keys=[];
+  setPass("");setHash("");
   try{await IDB.set("master",null)}catch(e){}
-  renderMaster();renderEmpty();showGate(msg);
+  showGate(msg);
 }
-function showPassForm(msg){lockAndClear(msg)}
 function syncNote(msg,err){const s=$("syncInfo");s.hidden=!msg;s.textContent=msg||"";s.style.color=err?"var(--err)":""}
 async function gunzip(u8){
   if(!("DecompressionStream" in window))throw new Error("nogzip");
   const ds=new Blob([u8]).stream().pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(ds).arrayBuffer());
 }
+async function loadSavedMaster(){if(index.size)return;try{const m=await IDB.get("master");if(m&&m.headers){setMaster(m);renderEmpty()}}catch(e){}}
 async function syncMaster(force){
   if(!MASTER_URL||syncing)return "skip";
   const pass=getPass();
-  if(!pass){showGate("");return "nopass"}
-  if(!navigator.onLine){syncNote("オフラインのため、端末に保存済みのマスタで照合しています。");return "offline"}
+  if(!pass)return "nopass";
+  if(!navigator.onLine)return "offline";
   syncing=true;$("syncBtn").disabled=true;syncNote("最新のマスタを確認しています…");
   try{
     const gz="DecompressionStream" in window;
@@ -545,47 +571,69 @@ async function syncMaster(force){
     const m={name:j.name||"item_master.csv",loaded:Date.now(),updated:j.updated,headers:rows[0].map(s=>s.trim()),rows:rows.slice(1)};
     setMaster(m);
     try{await IDB.set("master",m)}catch(e){}
-    syncNote(`最新のマスタを取り込みました（${index.size.toLocaleString()}品目）`);
+    syncNote(`最新のマスタに更新しました（${index.size.toLocaleString()}品目）`);
     renderEmpty();return "ok";
   }catch(err){
-    console.error("sync failed",err);
-    syncNote(index.size?"マスタを確認できませんでした。保存済みのマスタで照合しています。":"マスタを取得できませんでした。電波の良い場所でもう一度お試しください。",!index.size);
-    $("syncBtn").hidden=false;return "error";
+    console.error("sync failed",err);return "error";
   }finally{syncing=false;$("syncBtn").disabled=false}
-}
-async function runSync(force){
-  const r=await syncMaster(force);
-  if(r==="bad")await lockAndClear("パスワードが変更されました。新しいパスワードを入力してください。");
-  else if(r==="locked")syncNote("パスワードの入力ミスが続いたため、10分間取得できません。しばらくしてからお試しください。",true);
-  return r;
 }
 $("gateForm").addEventListener("submit",async e=>{e.preventDefault();
   const v=$("gateInput").value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).trim();
   if(!v){$("gateMsg").textContent="パスワードを入力してください。";return}
-  if(!navigator.onLine){$("gateMsg").textContent="初回のログインにはインターネット接続が必要です。";return}
   $("gateBtn").disabled=true;$("gateBtn").textContent="確認中…";$("gateMsg").textContent="";
-  setPass(v);const r=await syncMaster(true);
+  const h=await hashPass(v);
+  setPass(v);
+  await loadSavedMaster();                 // 保存済みマスタを読み込み
+  const r=await syncMaster(!index.size);   // ログインのたびにサーバーで最新か確認・更新
   $("gateBtn").disabled=false;$("gateBtn").textContent="ログイン";
-  if(r==="ok"){$("gateInput").value="";$("gateInput").blur();showApp()}
-  else if(r==="bad"){setPass("");$("gateMsg").textContent="パスワードが違います。";$("gateInput").select()}
-  else if(r==="locked"){setPass("");$("gateMsg").textContent="入力ミスが続いたため、10分間ログインできません。"}
-  else{setPass("");$("gateMsg").textContent="サーバーに接続できませんでした。電波の良い場所でもう一度お試しください。"}
+  if(r==="ok"){setHash(h);$("gateInput").value="";$("gateInput").blur();lastActive=Date.now();showApp();return}
+  if(r==="bad"){setPass("");clearScreen();$("gateMsg").textContent="パスワードが違います。";$("gateInput").select();return}
+  if(r==="locked"){setPass("");clearScreen();$("gateMsg").textContent="入力ミスが続いたため、10分間ログインできません。";return}
+  // 電波がない・サーバーにつながらないとき：前回ログインしたパスワードと同じなら保存済みマスタで使う
+  if(getHash()&&h===getHash()&&index.size){
+    $("gateInput").value="";$("gateInput").blur();showApp();
+    syncNote("オフラインのため、保存済みのマスタで照合しています（電波が戻ると自動で更新します）。");return}
+  setPass("");clearScreen();
+  $("gateMsg").textContent=getHash()&&h!==getHash()?"パスワードが違います。":"サーバーに接続できませんでした。初回のログインにはインターネット接続が必要です。";
 });
+async function runSync(force){
+  const r=await syncMaster(force);
+  if(r==="bad")await lockAndClear("パスワードが変更されました。新しいパスワードを入力してください。");
+  else if(r==="locked")syncNote("パスワードの入力ミスが続いたため、10分間取得できません。",true);
+  else if(r==="offline")syncNote("オフラインのため、保存済みのマスタで照合しています。");
+  else if(r==="error")syncNote(index.size?"マスタを確認できませんでした。保存済みのマスタで照合しています。":"マスタを取得できませんでした。",!index.size);
+  return r;
+}
 $("syncBtn").addEventListener("click",()=>runSync(true));
-let logoutArmed=null;
-$("logoutBtn").addEventListener("click",async()=>{const b=$("logoutBtn");
-  if(!b.classList.contains("armed")){b.classList.add("armed");b.textContent="もう一度押すとログアウト";logoutArmed=setTimeout(()=>{b.classList.remove("armed");b.textContent="ログアウト"},4000);return}
-  clearTimeout(logoutArmed);b.classList.remove("armed");b.textContent="ログアウト";
-  history=[];store("jan.hist",history);renderHistory();await lockAndClear("ログアウトしました。");});
-addEventListener("online",()=>{if(getPass())runSync(false)});
+$("logoutBtn").addEventListener("click",()=>logout("ログアウトしました。",true));
+$("endBtn").addEventListener("click",()=>logout("ログアウトしました。お疲れさまでした。",true));
+// 操作があるたびに時刻を記録し、一定時間操作がなければログアウト
+["pointerdown","keydown","touchstart"].forEach(ev=>addEventListener(ev,()=>{lastActive=Date.now()},{passive:true}));
+setInterval(()=>{
+  if(getPass()&&!$("app").hidden&&Date.now()-lastActive>IDLE_LOGOUT_MS)
+    logout(`${Math.round(IDLE_LOGOUT_MS/60000)}分間操作がなかったため、ログアウトしました。`);
+},20000);
+addEventListener("online",()=>{if(getPass()&&!$("app").hidden)runSync(false)});
+// アプリを閉じる・別のアプリに切り替える → 戻ったときに一定時間たっていればログアウト
+document.addEventListener("visibilitychange",()=>{
+  if(!getPass())return;
+  try{
+    if(document.hidden)sessionStorage.setItem("jan.hiddenAt",String(Date.now()));
+    else{const t=Number(sessionStorage.getItem("jan.hiddenAt")||0);sessionStorage.removeItem("jan.hiddenAt");
+      if(t&&Date.now()-t>AWAY_LOGOUT_MS)logout("アプリを閉じたため、ログアウトしました。");}
+  }catch(e){}
+});
+addEventListener("pagehide",()=>{if(getPass()){try{sessionStorage.setItem("jan.hiddenAt",String(Date.now()))}catch(e){}}});
 
 /* ---------- init ---------- */
 renderMaster();renderHistory();renderEmpty();
-if(MASTER_URL&&!getPass()){showGate("")}
-else{
-  showApp();
-  IDB.get("master").then(m=>{if(m&&m.headers){setMaster(m);renderEmpty()}}).catch(()=>{}).then(()=>{if(MASTER_URL)runSync(false)});
-}
+(async()=>{
+  if(!MASTER_URL){showApp();await loadSavedMaster();return}
+  let away=0;try{away=Number(sessionStorage.getItem("jan.hiddenAt")||0)}catch(e){}
+  if(!getPass()||(away&&Date.now()-away>AWAY_LOGOUT_MS)){setPass("");showGate(getHash()?"前回アプリを閉じたため、ログアウトしました。":"");return}
+  try{sessionStorage.removeItem("jan.hiddenAt")}catch(e){}
+  showApp();await loadSavedMaster();runSync(false);
+})();
 if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost")){navigator.serviceWorker.register("sw.js").catch(()=>{})}
 })();
 </script>
