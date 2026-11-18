@@ -96,6 +96,22 @@ dl.fields dd .cls{color:var(--fg);font-size:15px}
 .rank{display:inline-flex;align-items:center;justify-content:center;min-width:2em;padding:1px 8px;border-radius:6px;font-weight:800;
   background:var(--line);color:var(--fg)}
 .rank.rA,.rank.rB,.rank.rC,.rank.rD{background:var(--accent);color:var(--accent-fg)}
+.cmp{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.cmp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.cmp-tools{display:flex;gap:6px}
+button.seg{padding:5px 10px;font-size:12px;font-weight:600;border-radius:999px}
+button.seg.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button.seg.clr{color:var(--muted)}
+.cmp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.cmp-list li{display:grid;grid-template-columns:2.4em 1fr auto;gap:4px 10px;align-items:center;padding:9px 4px;border-top:1px solid var(--line);cursor:pointer}
+.cmp-list li:first-child{border-top:0}
+.cmp-list .rank{min-width:2.2em;font-size:16px;padding:3px 0;justify-content:center}
+.cmp-list .rank.none{background:transparent;border:1px dashed var(--line);color:var(--muted);font-size:11px;font-weight:600}
+.cmp-list .nm{min-width:0;font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmp-list .sub{grid-column:2/4;font-size:12px;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmp-list .no{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:13px;font-weight:700;white-space:nowrap}
+.cmp-list li.best{background:var(--accent-soft);border-radius:8px}
+.cmp-list .top{font-size:10px;font-weight:800;color:var(--accent);margin-left:6px}
 .pass{display:flex;gap:8px}
 .pass input{flex:1;min-width:0;font:inherit;font-family:var(--font-mono);font-size:18px;letter-spacing:.3em;padding:10px 12px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface);color:var(--fg)}
 .pname{font-size:20px;font-weight:700;margin:0;line-height:1.4}
@@ -157,6 +173,17 @@ button.clear{padding:6px 12px;font-size:13px;font-weight:600;color:var(--err);bo
       <div class="hint" id="scanHint"></div>
     </div>
     <p class="status" id="status" role="status"></p>
+    <div class="cmp" id="cmp" hidden>
+      <div class="cmp-head">
+        <span class="label">ランク比較（直近5件）</span>
+        <div class="cmp-tools">
+          <button type="button" class="seg on" id="cmpByTime">読んだ順</button>
+          <button type="button" class="seg" id="cmpByRank">ランク順</button>
+          <button type="button" class="seg clr" id="cmpClear">クリア</button>
+        </div>
+      </div>
+      <ol class="cmp-list" id="cmpList"></ol>
+    </div>
   </section>
 
   <section aria-label="手入力">
@@ -200,7 +227,7 @@ button.clear{padding:6px 12px;font-size:13px;font-weight:600;color:var(--err);bo
     </div>
   </section>
 
-  <footer>JAN照合スキャナー v11 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
+  <footer>JAN照合スキャナー v12 ・ バーコード読み取り: ZXing (Apache License 2.0)</footer>
 </main>
 
 <script src="config.js"></script>
@@ -366,6 +393,34 @@ $("clearHist").addEventListener("click",()=>{
 
 /* ---------- handle ---------- */
 function setStatus(msg,err){const s=$("status");s.textContent=msg||"";s.className="status"+(err?" err":"")}
+/* ---------- ランク比較（連続スキャン・直近5件） ---------- */
+const CMP_MAX=5;let cmpItems=[],cmpSort="time";
+function cmpAdd(jan,row){
+  cmpItems=cmpItems.filter(x=>x.jan!==jan);
+  cmpItems.unshift({jan,row,t:Date.now()});
+  cmpItems=cmpItems.slice(0,CMP_MAX);renderCmp();
+}
+function rankNo(row){const v=Number(cell(row,colIdx.rankNo));return row&&v>0?v:Infinity}
+function renderCmp(){
+  const box=$("cmp"),ol=$("cmpList");ol.textContent="";
+  box.hidden=!cmpItems.length;if(!cmpItems.length)return;
+  $("cmpByTime").classList.toggle("on",cmpSort==="time");$("cmpByRank").classList.toggle("on",cmpSort==="rank");
+  const list=cmpSort==="rank"?[...cmpItems].sort((a,b)=>rankNo(a.row)-rankNo(b.row)):cmpItems;
+  const best=Math.min(...cmpItems.map(x=>rankNo(x.row)));
+  list.forEach(x=>{const li=document.createElement("li");const r=cell(x.row,colIdx.rank),no=rankNo(x.row);
+    if(no!==Infinity&&no===best&&cmpItems.length>1)li.className="best";
+    const b=document.createElement("span");b.className="rank"+(r?" r"+r.toUpperCase():" none");b.textContent=r||"なし";
+    const nm=document.createElement("span");nm.className="nm";nm.textContent=x.row?(cell(x.row,colIdx.name)||"（名称なし）"):"マスタ未登録";
+    if(li.className==="best"){const t=document.createElement("span");t.className="top";t.textContent="最上位";nm.append(t)}
+    const n=document.createElement("span");n.className="no";n.textContent=no===Infinity?"—":"番号 "+no.toLocaleString();
+    const sub=document.createElement("span");sub.className="sub";
+    sub.textContent=[x.jan.slice(-5)?"…"+x.jan.slice(-5):"",cell(x.row,colIdx.mname),cell(x.row,colIdx.pack)?cell(x.row,colIdx.pack)+"個入":""].filter(Boolean).join(" ・ ");
+    li.append(b,nm,n,sub);li.onclick=()=>{const hit=lookup(x.jan);render(x.jan,hit,"比較リストから")};ol.append(li)});
+}
+$("cmpByTime").addEventListener("click",()=>{cmpSort="time";renderCmp()});
+$("cmpByRank").addEventListener("click",()=>{cmpSort="rank";renderCmp()});
+$("cmpClear").addEventListener("click",()=>{cmpItems=[];renderCmp()});
+
 function handle(code,src){
   lastActive=Date.now();
   const c=norm(code);if(!c)return;
@@ -435,12 +490,13 @@ function onCode(text){
   }else{
     // 連続スキャン：カメラはそのまま。読んだ件数を表示
     contCount++;const n=$("scanCount");n.hidden=false;n.textContent=`${contCount}件 読み取り`;
+    {const c=norm(text),h=lookup(c);cmpAdd(h?h.jan:c,h&&h.row)}
   }
 }
 const ZX_FORMATS=()=>{const Z=ZXing;return[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,Z.BarcodeFormat.ITF,Z.BarcodeFormat.CODE_128]};
 async function startScan(mode){
   if(scanning)return;
-  scanMode=mode||"single";contCount=0;last="";$("scanCount").hidden=true;
+  scanMode=mode||"single";contCount=0;if(scanMode==="cont"){cmpItems=[];renderCmp()}last="";$("scanCount").hidden=true;
   $("scanHint").textContent=scanMode==="single"?"バーコードを枠に合わせると自動で読み取り、カメラが止まります":"続けて読み取れます。終わったら［スキャン停止］";
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){setStatus("この端末ではカメラを使えません。「写真から読み取る」か手入力を使ってください。",true);return}
   scanning=true;$("scanBtns").hidden=true;$("scanStop").hidden=false;$("videoWrap").hidden=false;setStatus("カメラを起動しています…");
@@ -523,6 +579,7 @@ function clearScreen(){
   // 画面上の商品情報を消す（端末内の保存マスタは残すので、次回はすぐ使える）
   try{stopScan()}catch(e){}
   master={headers:[],rows:[],name:"",ci:-1};index=new Map();keys=[];
+  cmpItems=[];try{renderCmp()}catch(e){}
   $("manualJan").value="";$("sugg").hidden=true;renderMaster();renderEmpty();setStatus("");syncNote("");
 }
 function showGate(msg){clearScreen();$("app").hidden=true;$("gate").hidden=false;$("gateMsg").textContent=msg||"";
